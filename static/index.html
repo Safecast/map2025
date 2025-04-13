@@ -1,0 +1,186 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simplified Safecast Map</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { width: 100%; height: 100vh; }
+        .info { padding: 6px 8px; font: 14px/16px Arial, Helvetica, sans-serif; background: white; background: rgba(255,255,255,0.8); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; }
+        .info h4 { margin: 0 0 5px; color: #777; }
+        .legend { line-height: 18px; color: #555; }
+        .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; opacity: 0.7; }
+        .leaflet-tooltip-hover { background-color: rgba(0, 0, 0, 0.7); color: white; border: none; box-shadow: none; padding: 5px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        const map = L.map('map').setView([37.5, 140.0], 6);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        const safecastLayer = L.tileLayer('/api/tiles/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            tms: false,
+            opacity: 0.7,
+            attribution: 'Data: <a href="https://safecast.org">Safecast</a>'
+        }).addTo(map);
+
+        // --- Hover Interaction Logic ---
+        let currentPoints = [];
+        let hoverTooltip = null;
+        let mouseLatLng = null;
+
+        async function fetchPointsForView() {
+            console.log("Attempting to fetch points for view..."); // Log: Start fetch
+            const bounds = map.getBounds();
+            const url = `/api/measurements?min_lat=${bounds.getSouth()}&max_lat=${bounds.getNorth()}&min_lng=${bounds.getWest()}&max_lng=${bounds.getEast()}&limit=1000`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                currentPoints = await response.json();
+                // Log: Report number of points fetched
+                console.log(`Workspaceed ${currentPoints.length} points for hover. First point (if any):`, currentPoints.length > 0 ? currentPoints[0] : 'None');
+            } catch (error) {
+                console.error("Error fetching points for hover:", error);
+                currentPoints = [];
+            }
+        }
+
+        function findClosestPoint(latlng) {
+            let closestPoint = null;
+            let minDistanceSq = Infinity;
+            // Adjusted threshold distance (degrees squared) - Less sensitive to zoom initially
+            // Try making this value larger if tooltips don't appear
+            const baseThreshold = 0.0005; // Increased base sensitivity
+            const thresholdDistanceSq = baseThreshold * Math.pow(0.85, map.getZoom()); // Slightly slower reduction per zoom level
+
+            // Log: Report threshold being used
+            // console.log(`Using thresholdSq: ${thresholdDistanceSq.toExponential(3)} at zoom ${map.getZoom()}`);
+
+            currentPoints.forEach(point => {
+                if (point.latitude && point.longitude) {
+                    const dx = latlng.lng - point.longitude;
+                    const dy = latlng.lat - point.latitude;
+                    const distanceSq = dx * dx + dy * dy;
+
+                    if (distanceSq < thresholdDistanceSq) { // Check against threshold first
+                         if (distanceSq < minDistanceSq) { // Then check if it's the closest *within* threshold
+                            minDistanceSq = distanceSq;
+                            closestPoint = point;
+                         }
+                    }
+                }
+            });
+            // Log: Report if a closest point was found within threshold
+            // if (closestPoint) { console.log(`Found closest point within threshold: ${closestPoint.id || 'N/A'}, distSq: ${minDistanceSq.toExponential(3)}`); }
+
+            return closestPoint;
+        }
+
+        function updateTooltip(latlng) {
+            if (!latlng) return;
+
+            const closestPoint = findClosestPoint(latlng);
+
+            if (closestPoint) {
+                // Log: Indicate tooltip should be shown/updated
+                // console.log("Updating tooltip for point:", closestPoint.id || 'N/A');
+                const content = `
+                    <b>Value:</b> ${closestPoint.value.toFixed(2)} ${closestPoint.unit || 'CPM'}<br>
+                    <b>Date:</b> ${new Date(closestPoint.captured_at).toLocaleDateString()}<br>
+                    <b>Coords:</b> ${closestPoint.latitude.toFixed(4)}, ${closestPoint.longitude.toFixed(4)}
+                    ${closestPoint.device_id ? `<br><b>Device:</b> ${closestPoint.device_id}` : ''}
+                `;
+
+                if (!hoverTooltip) {
+                    hoverTooltip = L.tooltip({
+                        permanent: false, sticky: true, direction: 'top',
+                        offset: L.point(0, -10), className: 'leaflet-tooltip-hover'
+                    })
+                    .setLatLng(latlng)
+                    .setContent(content)
+                    .addTo(map);
+                } else {
+                    hoverTooltip.setLatLng(latlng).setContent(content);
+                     if (!map.hasLayer(hoverTooltip)) {
+                       hoverTooltip.addTo(map);
+                    }
+                }
+            } else {
+                // Log: Indicate tooltip should be hidden
+                // console.log("No close point found, hiding tooltip.");
+                if (hoverTooltip && map.hasLayer(hoverTooltip)) {
+                    map.removeLayer(hoverTooltip);
+                    hoverTooltip = null;
+                }
+            }
+        }
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => { clearTimeout(timeout); func(...args); };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        map.on('load zoomend moveend', debounce(fetchPointsForView, 500));
+
+        map.on('mousemove', debounce((e) => {
+             mouseLatLng = e.latlng;
+             // console.log("Mouse move detected:", mouseLatLng.lat.toFixed(4), mouseLatLng.lng.toFixed(4)); // Log: Mouse movement coords
+             updateTooltip(mouseLatLng);
+        }, 50));
+
+        map.on('mouseout', () => {
+             // console.log("Mouse out of map."); // Log: Mouse leaving map
+             if (hoverTooltip && map.hasLayer(hoverTooltip)) {
+                 map.removeLayer(hoverTooltip);
+                 hoverTooltip = null;
+             }
+             mouseLatLng = null;
+        });
+
+        fetchPointsForView(); // Initial fetch
+
+        // --- End Hover Interaction Logic ---
+
+        // Add info control
+        const info = L.control();
+        info.onAdd = function (map) { this._div = L.DomUtil.create('div', 'info'); this.update(); return this._div; };
+        info.update = function (props) { this._div.innerHTML = '<h4>Simplified Safecast Radiation Map</h4><p>Hover over data areas for details</p>'; };
+        info.addTo(map);
+
+        // Add legend
+        const legend = L.control({position: 'bottomright'});
+        legend.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'info legend');
+            const grades = [0, 50, 100, 200, 500, 1000];
+            const colors = ['#009900', '#FFFF00', '#FFCC00', '#FF9900', '#FF6600', '#FF0000'];
+            div.innerHTML += '<b>Radiation (CPM)</b><br>';
+            for (let i = 0; i < grades.length; i++) {
+                 div.innerHTML += '<i style="background:' + colors[i] + '; opacity: 0.7;"></i> ' + grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
+            }
+            return div;
+        };
+        legend.addTo(map);
+
+        L.control.scale().addTo(map);
+
+    </script>
+</body>
+</html>

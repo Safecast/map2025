@@ -1,3 +1,4 @@
+![Screenshot from 2025-04-13 23-26-34](https://github.com/user-attachments/assets/77a761eb-521f-48e9-ae4b-fe1325d22e15)
 # Simplified Safecast Map
 
 This project is a simplified web map visualizing radiation measurement data from Safecast. It's built using Python (FastAPI), DuckDB, and Leaflet.

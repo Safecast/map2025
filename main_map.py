@@ -69,7 +69,8 @@ default_html = """
         .legend .legend-body {
             display: flex; /* Arrange gradient and labels side-by-side */
             align-items: stretch; /* Stretch items vertically */
-            height: 120px; /* Set fixed height for legend body */
+            /* MODIFIED: Increased height */
+            height: 150px; /* Set fixed height for legend body */
         }
 
         /* Style for the gradient bar */
@@ -86,7 +87,8 @@ default_html = """
             display: flex;
             flex-direction: column; /* Stack labels vertically */
             justify-content: space-between; /* Space out labels vertically */
-            font-size: 9px; /* Smaller font for labels */
+            /* MODIFIED: Increased font size */
+            font-size: 11px; /* Make labels slightly bigger */
             padding: 0; /* Reset padding */
         }
          .legend .labels span {
@@ -117,8 +119,7 @@ default_html = """
     <script>
         // --- Leaflet Map Initialization ---
         const map = L.map('map', {
-            // *** ADDED MAX ZOOM LIMIT ***
-            maxZoom: 18
+            maxZoom: 18 // Max zoom limit
         }).setView([37.5, 140.0], 6); // Centered on Japan
 
         const mapContainer = map.getContainer(); // Get map container element for cursor styling
@@ -162,7 +163,8 @@ default_html = """
 
         legend.onAdd = function (map) {
             const div = L.DomUtil.create('div', 'info legend leaflet-control');
-            div.innerHTML += '<b>Radiation (Log Scale, CPM)</b>'; // Title
+            // MODIFIED: Changed legend title
+            div.innerHTML += '<b>CPM</b>'; // Use simpler title
 
             // Create a container for the gradient bar and labels
             const body = L.DomUtil.create('div', 'legend-body', div);
@@ -188,7 +190,7 @@ default_html = """
                 if (cpm_val < 1) { label_text = cpm_val.toFixed(1); }
                 else if (cpm_val < 10) { label_text = Math.round(cpm_val).toString(); }
                 else if (cpm_val < 1000) { label_text = Math.round(cpm_val).toString(); }
-                else { label_text = (Math.round(cpm_val / 100) / 10).toFixed(0) + 'k'; } // Simpler '1k' format
+                else { label_text = (Math.round(cpm_val / 100) / 10).toFixed(0) + 'k'; }
 
                 // Add '+' for the top (max) label
                 if (i === 0) { label_text += '+'; }

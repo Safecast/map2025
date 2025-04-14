@@ -45,7 +45,6 @@ app.add_middleware(
 
 # Moved default_html definition here, BEFORE it's used in the root route
 # Default HTML content for the main page - Includes all JS and CSS
-# (Using the last working version with dark UI elements and fixed legend)
 default_html = """
 <!DOCTYPE html>
 <html>
@@ -60,8 +59,43 @@ default_html = """
         #map { width: 100%; height: 100vh; }
         .info { padding: 6px 8px !important; font: 14px/16px Arial, Helvetica, sans-serif !important; box-shadow: 0 0 15px rgba(0,0,0,0.2) !important; border-radius: 5px !important; color: white !important; background-color: black !important; }
         .info h4 { margin: 0 0 5px !important; color: #fff !important; }
-        .legend { line-height: 1.5 !important; color: white !important; }
-        .legend i { display: inline-block; vertical-align: middle; width: 18px !important; height: 18px !important; margin-right: 8px !important; opacity: 0.8 !important; border: 1px solid #555 !important; }
+
+        /* --- Legend Styles --- */
+        .legend {
+            color: white !important;
+            padding: 6px 10px !important; /* Adjust padding */
+         }
+        .legend b { font-size: 13px; display: block; margin-bottom: 5px; text-align: center;} /* Style title */
+        .legend .legend-body {
+            display: flex; /* Arrange gradient and labels side-by-side */
+            align-items: stretch; /* Stretch items vertically */
+            height: 120px; /* Set fixed height for legend body */
+        }
+
+        /* Style for the gradient bar */
+        .legend .gradient {
+            width: 12px; /* Width of the vertical gradient bar */
+            border: 1px solid #555;
+            margin-right: 5px; /* Space between gradient and labels */
+            /* Vertical Gradient definition - MUST match backend colormap */
+            background: linear-gradient(to top, #009900, #E6E600, #E60000); /* Green(bottom), Yellow, Red(top) */
+            opacity: 0.8;
+        }
+         /* Style for the labels container */
+        .legend .labels {
+            display: flex;
+            flex-direction: column; /* Stack labels vertically */
+            justify-content: space-between; /* Space out labels vertically */
+            font-size: 9px; /* Smaller font for labels */
+            padding: 0; /* Reset padding */
+        }
+         .legend .labels span {
+            text-align: left; /* Align text to the left */
+            line-height: 1.1; /* Adjust line height */
+         }
+
+        /* --- End Legend Styles --- */
+
         .leaflet-tooltip-hover { background-color: rgba(0, 0, 0, 0.85) !important; color: white !important; border: none !important; box-shadow: none !important; padding: 5px !important; font-size: 12px !important; }
         .leaflet-bar a, .leaflet-bar a:hover { background-color: #0f0f0f !important; border-bottom: 1px solid #ccc !important; width: 26px !important; height: 26px !important; line-height: 26px !important; display: block !important; text-align: center !important; text-decoration: none !important; color: #fff !important; }
         .leaflet-bar a:first-child { border-top-left-radius: 4px !important; border-top-right-radius: 4px !important; }
@@ -82,24 +116,94 @@ default_html = """
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script>
         // --- Leaflet Map Initialization ---
-        const map = L.map('map').setView([37.5, 140.0], 6);
-        const mapContainer = map.getContainer();
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
-        const safecastLayer = L.tileLayer('/api/tiles/{z}/{x}/{y}.png', { maxZoom: 18, tms: false, opacity: 0.65, attribution: 'Data: <a href="https://safecast.org">Safecast</a>' }).addTo(map);
+        const map = L.map('map', {
+            // *** ADDED MAX ZOOM LIMIT ***
+            maxZoom: 18
+        }).setView([37.5, 140.0], 6); // Centered on Japan
+
+        const mapContainer = map.getContainer(); // Get map container element for cursor styling
+
+        // --- Base Map Layer ---
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19, // Base map can support higher zoom, but map itself is limited
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // --- Heatmap Tile Layer ---
+        const safecastLayer = L.tileLayer('/api/tiles/{z}/{x}/{y}.png', {
+            maxZoom: 18, // Tile generation also stops at 18
+            tms: false,
+            opacity: 0.65,
+            attribution: 'Data: <a href="https://safecast.org">Safecast</a>'
+        }).addTo(map);
+
+        // --- State Variables for Interactivity (unchanged) ---
         let currentPoints = []; let hoverTooltip = null; let mouseLatLng = null; let hoveredPointData = null; let pinnedPopup = null;
+
+        // --- Helper Functions (unchanged) ---
         async function fetchPointsForView() { const bounds = map.getBounds(); const url = `/api/measurements?min_lat=${bounds.getSouth()}&max_lat=${bounds.getNorth()}&min_lng=${bounds.getWest()}&max_lng=${bounds.getEast()}&limit=1000`; try { const response = await fetch(url); if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}`); } currentPoints = await response.json(); } catch (error) { console.error("Error fetching points for hover:", error); currentPoints = []; } }
         function findClosestPoint(latlng) { let closestPoint = null; let minDistanceSq = Infinity; const baseThreshold = 0.0005; const thresholdDistanceSq = baseThreshold * Math.pow(0.85, map.getZoom()); currentPoints.forEach(point => { if (point.latitude && point.longitude) { const dx = latlng.lng - point.longitude; const dy = latlng.lat - point.latitude; const distanceSq = dx * dx + dy * dy; if (distanceSq < thresholdDistanceSq) { if (distanceSq < minDistanceSq) { minDistanceSq = distanceSq; closestPoint = point; } } } }); return closestPoint; }
         function hideHoverTooltip() { if (hoverTooltip && map.hasLayer(hoverTooltip)) { map.removeLayer(hoverTooltip); hoverTooltip = null; } }
         function updateTooltip(latlng) { if (!latlng) return; const closestPoint = findClosestPoint(latlng); if (closestPoint) { mapContainer.classList.add('pointer-cursor'); hoveredPointData = closestPoint; if (pinnedPopup && pinnedPopup.options.customId === closestPoint.id) { hideHoverTooltip(); return; } const content = `<i>Hover - Click to Pin</i><br><b>Value:</b> ${closestPoint.value.toFixed(2)} ...`; if (!hoverTooltip) { hoverTooltip = L.tooltip({ permanent: false, sticky: true, direction: 'top', offset: L.point(0, -10), className: 'leaflet-tooltip-hover' }).setLatLng(latlng).setContent(content).addTo(map); } else { hoverTooltip.setLatLng(latlng).setContent(content); if (!map.hasLayer(hoverTooltip)) { hoverTooltip.addTo(map); } } } else { mapContainer.classList.remove('pointer-cursor'); hoveredPointData = null; hideHoverTooltip(); } }
         function debounce(func, wait) { let timeout; return function executedFunction(...args) { const later = () => { clearTimeout(timeout); func(...args); }; clearTimeout(timeout); timeout = setTimeout(later, wait); }; }
+
+        // --- Event Listeners (unchanged) ---
         map.on('load zoomend moveend', debounce(fetchPointsForView, 500));
         map.on('mousemove', debounce((e) => { mouseLatLng = e.latlng; updateTooltip(mouseLatLng); }, 50));
         map.on('mouseout', () => { mapContainer.classList.remove('pointer-cursor'); hideHoverTooltip(); hoveredPointData = null; mouseLatLng = null; });
         map.on('click', function(e) { if (pinnedPopup) { map.removeLayer(pinnedPopup); pinnedPopup = null; } if (hoveredPointData) { const point = hoveredPointData; const dateObject = new Date(point.captured_at * 1000); const dateString = !isNaN(dateObject) ? dateObject.toISOString() : "Invalid Date"; const popupContent = `<b>Value:</b> ${point.value.toFixed(2)} ${point.unit || 'CPM'}<br><b>Date:</b> ${dateString}<br><b>Coords:</b> ${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}${point.device_id ? `<br><b>Device:</b> ${point.device_id}` : ''}`; pinnedPopup = L.popup({ closeButton: true, autoClose: false, closeOnClick: false, keepInView: true, customId: point.id }).setLatLng([point.latitude, point.longitude]).setContent(popupContent).openOn(map); hideHoverTooltip(); hoveredPointData = null; } });
-        fetchPointsForView();
+        fetchPointsForView(); // Initial fetch
+
+        // --- UI Controls ---
         const info = L.control({position: 'topright'}); info.onAdd = function (map) { this._div = L.DomUtil.create('div', 'info'); this.update(); return this._div; }; info.update = function (props) { this._div.innerHTML = '<h4>Simplified Safecast Map</h4><p>Hover over data areas for details</p>'; }; info.addTo(map);
-        const legend = L.control({position: 'bottomright'}); const legendColors = { green: '#009900', yellow: '#E6E600', red: '#E60000' }; function getLegendColor(cpmValue) { if (cpmValue <= 100) { return legendColors.green; } else if (cpmValue <= 500) { return legendColors.yellow; } else { return legendColors.red; } } legend.onAdd = function (map) { const div = L.DomUtil.create('div', 'info legend leaflet-control'); const grades = [0, 100, 500, 1000]; div.innerHTML += '<b>Radiation (CPM)</b><br>'; for (let i = 0; i < grades.length; i++) { const gradeValue = grades[i]; const color = getLegendColor(gradeValue); const label = gradeValue + (grades[i + 1] ? '&ndash;' + grades[i + 1] : '+'); div.innerHTML += '<i style="background:' + color + ';"></i> ' + label + '<br>'; } return div; }; legend.addTo(map);
+
+        // *** MODIFIED LEGEND JAVASCRIPT ***
+        const legend = L.control({position: 'bottomright'});
+
+        legend.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'info legend leaflet-control');
+            div.innerHTML += '<b>Radiation (Log Scale, CPM)</b>'; // Title
+
+            // Create a container for the gradient bar and labels
+            const body = L.DomUtil.create('div', 'legend-body', div);
+
+            // Add the gradient bar div
+            const gradient = L.DomUtil.create('div', 'gradient', body);
+
+            // Add the labels div
+            const labels = L.DomUtil.create('div', 'labels', body);
+
+            // Define log scale points (0 to 7) and calculate corresponding CPM
+            const log_vmin = 0.0;
+            const log_vmax = 7.0;
+            const num_labels = 8; // Number of labels (adjust as needed)
+
+            for (let i = 0; i < num_labels; i++) {
+                // Calculate log value from top (i=0) to bottom (i=num_labels-1)
+                const log_val = log_vmax - (i * (log_vmax - log_vmin) / (num_labels - 1));
+                const cpm_val = Math.exp(log_val) - 1;
+
+                // Format the CPM value for display
+                let label_text;
+                if (cpm_val < 1) { label_text = cpm_val.toFixed(1); }
+                else if (cpm_val < 10) { label_text = Math.round(cpm_val).toString(); }
+                else if (cpm_val < 1000) { label_text = Math.round(cpm_val).toString(); }
+                else { label_text = (Math.round(cpm_val / 100) / 10).toFixed(0) + 'k'; } // Simpler '1k' format
+
+                // Add '+' for the top (max) label
+                if (i === 0) { label_text += '+'; }
+
+                labels.innerHTML += `<span>${label_text}</span>`;
+            }
+
+            return div;
+        };
+        legend.addTo(map);
+        // *** END MODIFIED LEGEND JAVASCRIPT ***
+
         L.control.scale({imperial: false, position: 'bottomleft'}).addTo(map);
+        // --- End UI Controls ---
+
     </script>
 </body>
 </html>
@@ -327,7 +431,7 @@ def import_sample_data():
 # Comment out if you only want to load manually imported data
 # import_sample_data()
 
-# *** ADDED Database Check after import attempt ***
+# Database Check after import attempt
 print("--- Database Check ---")
 try:
     db_count = conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]

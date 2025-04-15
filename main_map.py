@@ -61,41 +61,12 @@ default_html = """
         .info h4 { margin: 0 0 5px !important; color: #fff !important; }
 
         /* --- Legend Styles --- */
-        .legend {
-            color: white !important;
-            padding: 6px 10px !important; /* Adjust padding */
-         }
-        .legend b { font-size: 13px; display: block; margin-bottom: 5px; text-align: center;} /* Style title */
-        .legend .legend-body {
-            display: flex; /* Arrange gradient and labels side-by-side */
-            align-items: stretch; /* Stretch items vertically */
-            /* MODIFIED: Increased height */
-            height: 150px; /* Set fixed height for legend body */
-        }
-
-        /* Style for the gradient bar */
-        .legend .gradient {
-            width: 12px; /* Width of the vertical gradient bar */
-            border: 1px solid #555;
-            margin-right: 5px; /* Space between gradient and labels */
-            /* Vertical Gradient definition - MUST match backend colormap */
-            background: linear-gradient(to top, #009900, #E6E600, #E60000); /* Green(bottom), Yellow, Red(top) */
-            opacity: 0.8;
-        }
-         /* Style for the labels container */
-        .legend .labels {
-            display: flex;
-            flex-direction: column; /* Stack labels vertically */
-            justify-content: space-between; /* Space out labels vertically */
-            /* MODIFIED: Increased font size */
-            font-size: 11px; /* Make labels slightly bigger */
-            padding: 0; /* Reset padding */
-        }
-         .legend .labels span {
-            text-align: left; /* Align text to the left */
-            line-height: 1.1; /* Adjust line height */
-         }
-
+        .legend { color: white !important; padding: 6px 10px !important; }
+        .legend b { font-size: 13px; display: block; margin-bottom: 5px; text-align: center;}
+        .legend .legend-body { display: flex; align-items: stretch; height: 150px; }
+        .legend .gradient { width: 12px; border: 1px solid #555; margin-right: 5px; background: linear-gradient(to top, #009900, #E6E600, #E60000); opacity: 0.8; }
+        .legend .labels { display: flex; flex-direction: column; justify-content: space-between; font-size: 11px; padding: 0; }
+        .legend .labels span { text-align: left; line-height: 1.1; }
         /* --- End Legend Styles --- */
 
         .leaflet-tooltip-hover { background-color: rgba(0, 0, 0, 0.85) !important; color: white !important; border: none !important; box-shadow: none !important; padding: 5px !important; font-size: 12px !important; }
@@ -110,6 +81,13 @@ default_html = """
         .leaflet-popup-content { margin: 13px 19px; line-height: 1.4; }
         .leaflet-popup-tip { background: #333; }
         .leaflet-popup-close-button { color: #bbb !important; }
+
+        /* *** ADDED: CSS Filter to darken base map tiles *** */
+        .leaflet-tile-pane {
+            filter: brightness(90%); /* Adjust percentage down for darker, up for lighter */
+        }
+        /* *** END ADDED CSS Filter *** */
+
     </style>
 </head>
 <body>
@@ -134,7 +112,7 @@ default_html = """
         const safecastLayer = L.tileLayer('/api/tiles/{z}/{x}/{y}.png', {
             maxZoom: 18, // Tile generation also stops at 18
             tms: false,
-            opacity: 0.65,
+            opacity: 0.65, // Adjust opacity of the heatmap if needed with darker base
             attribution: 'Data: <a href="https://safecast.org">Safecast</a>'
         }).addTo(map);
 
@@ -155,57 +133,11 @@ default_html = """
         map.on('click', function(e) { if (pinnedPopup) { map.removeLayer(pinnedPopup); pinnedPopup = null; } if (hoveredPointData) { const point = hoveredPointData; const dateObject = new Date(point.captured_at * 1000); const dateString = !isNaN(dateObject) ? dateObject.toISOString() : "Invalid Date"; const popupContent = `<b>Value:</b> ${point.value.toFixed(2)} ${point.unit || 'CPM'}<br><b>Date:</b> ${dateString}<br><b>Coords:</b> ${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}${point.device_id ? `<br><b>Device:</b> ${point.device_id}` : ''}`; pinnedPopup = L.popup({ closeButton: true, autoClose: false, closeOnClick: false, keepInView: true, customId: point.id }).setLatLng([point.latitude, point.longitude]).setContent(popupContent).openOn(map); hideHoverTooltip(); hoveredPointData = null; } });
         fetchPointsForView(); // Initial fetch
 
-        // --- UI Controls ---
+        // --- UI Controls (unchanged) ---
         const info = L.control({position: 'topright'}); info.onAdd = function (map) { this._div = L.DomUtil.create('div', 'info'); this.update(); return this._div; }; info.update = function (props) { this._div.innerHTML = '<h4>Simplified Safecast Map</h4><p>Hover over data areas for details</p>'; }; info.addTo(map);
-
-        // *** MODIFIED LEGEND JAVASCRIPT ***
-        const legend = L.control({position: 'bottomright'});
-
-        legend.onAdd = function (map) {
-            const div = L.DomUtil.create('div', 'info legend leaflet-control');
-            // MODIFIED: Changed legend title
-            div.innerHTML += '<b>CPM</b>'; // Use simpler title
-
-            // Create a container for the gradient bar and labels
-            const body = L.DomUtil.create('div', 'legend-body', div);
-
-            // Add the gradient bar div
-            const gradient = L.DomUtil.create('div', 'gradient', body);
-
-            // Add the labels div
-            const labels = L.DomUtil.create('div', 'labels', body);
-
-            // Define log scale points (0 to 7) and calculate corresponding CPM
-            const log_vmin = 0.0;
-            const log_vmax = 7.0;
-            const num_labels = 8; // Number of labels (adjust as needed)
-
-            for (let i = 0; i < num_labels; i++) {
-                // Calculate log value from top (i=0) to bottom (i=num_labels-1)
-                const log_val = log_vmax - (i * (log_vmax - log_vmin) / (num_labels - 1));
-                const cpm_val = Math.exp(log_val) - 1;
-
-                // Format the CPM value for display
-                let label_text;
-                if (cpm_val < 1) { label_text = cpm_val.toFixed(1); }
-                else if (cpm_val < 10) { label_text = Math.round(cpm_val).toString(); }
-                else if (cpm_val < 1000) { label_text = Math.round(cpm_val).toString(); }
-                else { label_text = (Math.round(cpm_val / 100) / 10).toFixed(0) + 'k'; }
-
-                // Add '+' for the top (max) label
-                if (i === 0) { label_text += '+'; }
-
-                labels.innerHTML += `<span>${label_text}</span>`;
-            }
-
-            return div;
-        };
-        legend.addTo(map);
-        // *** END MODIFIED LEGEND JAVASCRIPT ***
-
+        const legend = L.control({position: 'bottomright'}); legend.onAdd = function (map) { const div = L.DomUtil.create('div', 'info legend leaflet-control'); div.innerHTML += '<b>CPM</b>'; const body = L.DomUtil.create('div', 'legend-body', div); const gradient = L.DomUtil.create('div', 'gradient', body); const labels = L.DomUtil.create('div', 'labels', body); const log_vmin = 0.0; const log_vmax = 7.0; const num_labels = 8; let labelsHTML = ''; for (let i = 0; i < num_labels; i++) { const log_val = log_vmax - (i * (log_vmax - log_vmin) / (num_labels - 1)); const cpm_val = Math.exp(log_val) - 1; let label_text; if (cpm_val < 1) { label_text = cpm_val.toFixed(1); } else if (cpm_val < 10) { label_text = Math.round(cpm_val).toString(); } else if (cpm_val < 1000) { label_text = Math.round(cpm_val).toString(); } else { label_text = (Math.round(cpm_val / 100) / 10).toFixed(0) + 'k'; } if (i === 0) { label_text += '+'; } labelsHTML += `<span>${label_text}</span>`; } labels.innerHTML = labelsHTML; return div; }; legend.addTo(map);
         L.control.scale({imperial: false, position: 'bottomleft'}).addTo(map);
-        // --- End UI Controls ---
-
+        // --- End JavaScript Code ---
     </script>
 </body>
 </html>

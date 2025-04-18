@@ -1,0 +1,6 @@
+Exception ignored in: <function Variable.__del__ at 0x7004413cc9a0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/tkinter/__init__.py", line 410, in __del__
+    if self._tk.getboolean(self._tk.call("info", "exists", self._name)):
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: main thread is not in main loop

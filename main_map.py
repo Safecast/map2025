@@ -82,11 +82,10 @@ default_html = """
         .leaflet-popup-tip { background: #333; }
         .leaflet-popup-close-button { color: #bbb !important; }
 
-        /* *** ADDED: CSS Filter to darken base map tiles *** */
+        /* CSS Filter to darken base map tiles */
         .leaflet-tile-pane {
             filter: brightness(90%); /* Adjust percentage down for darker, up for lighter */
         }
-        /* *** END ADDED CSS Filter *** */
 
     </style>
 </head>
@@ -112,7 +111,7 @@ default_html = """
         const safecastLayer = L.tileLayer('/api/tiles/{z}/{x}/{y}.png', {
             maxZoom: 18, // Tile generation also stops at 18
             tms: false,
-            opacity: 0.65, // Adjust opacity of the heatmap if needed with darker base
+            opacity: 0.7, // Adjusted opacity slightly for darker base map
             attribution: 'Data: <a href="https://safecast.org">Safecast</a>'
         }).addTo(map);
 
@@ -243,25 +242,55 @@ def import_csv_data(file_path):
     except FileNotFoundError: print(f"Error: File not found at {file_path}"); return False
     except Exception as e: print(f"An unexpected error occurred during CSV import: {e}"); return False
 
-# Function to generate a heatmap tile
+# *** MODIFIED generate_tile function ***
 def generate_tile(z, x, y, width=256, height=256):
-    tile_path = f"tiles/{z}/{x}/{y}.png"; tile_dir = os.path.dirname(tile_path); os.makedirs(tile_dir, exist_ok=True)
-    bounds = get_tile_bounds(z, x, y); lat_range = bounds['max_lat'] - bounds['min_lat']; lng_range = bounds['max_lng'] - bounds['min_lng']
-    buffer_factor = 0.25; buffered_bounds = { 'min_lat': bounds['min_lat'] - lat_range * buffer_factor, 'max_lat': bounds['max_lat'] + lat_range * buffer_factor, 'min_lng': bounds['min_lng'] - lng_range * buffer_factor, 'max_lng': bounds['max_lng'] + lng_range * buffer_factor }
+    """Generates a heatmap tile image for the given Z/X/Y coordinates."""
+    tile_path = f"tiles/{z}/{x}/{y}.png"
+    tile_dir = os.path.dirname(tile_path)
+    os.makedirs(tile_dir, exist_ok=True) # Ensure directory exists
+
+    bounds = get_tile_bounds(z, x, y)
+    lat_range = bounds['max_lat'] - bounds['min_lat']
+    lng_range = bounds['max_lng'] - bounds['min_lng']
+    buffer_factor = 0.25
+    buffered_bounds = { 'min_lat': bounds['min_lat'] - lat_range * buffer_factor, 'max_lat': bounds['max_lat'] + lat_range * buffer_factor, 'min_lng': bounds['min_lng'] - lng_range * buffer_factor, 'max_lng': bounds['max_lng'] + lng_range * buffer_factor }
     query = f"SELECT latitude, longitude, value FROM measurements WHERE latitude >= {buffered_bounds['min_lat']} AND latitude <= {buffered_bounds['max_lat']} AND longitude >= {buffered_bounds['min_lng']} AND longitude <= {buffered_bounds['max_lng']}"
     try: result = conn.execute(query).fetchdf()
     except Exception as e: print(f"Error querying data for tile {z}/{x}/{y}: {e}"); result = pd.DataFrame()
     if result.empty: img = Image.new('RGBA', (width, height), (0, 0, 0, 0)); img.save(tile_path); return tile_path
+
     dpi = 100; fig = plt.figure(figsize=(width/dpi, height/dpi), dpi=dpi); ax = fig.add_subplot(111)
-    x_pixels = (result['longitude'] - bounds['min_lng']) / lng_range * width; y_pixels = (1 - (result['latitude'] - bounds['min_lat']) / lat_range) * height
-    values = np.log1p(result['value'].clip(lower=0)); cmap_colors = [(0, 0.6, 0), (0.9, 0.9, 0), (0.9, 0, 0)]; cmap = LinearSegmentedColormap.from_list('safecast_gyr', cmap_colors)
-    log_vmin = 0.0; log_vmax = 7.0; norm = mcolors.Normalize(vmin=log_vmin, vmax=log_vmax); marker_size = 300; alpha_value = 0.15
-    scatter = ax.scatter( x_pixels, y_pixels, c=values, s=marker_size, cmap=cmap, alpha=alpha_value, norm=norm, marker='o', linewidths=0 )
+    x_pixels = (result['longitude'] - bounds['min_lng']) / lng_range * width
+    y_pixels = (1 - (result['latitude'] - bounds['min_lat']) / lat_range) * height
+    values = np.log1p(result['value'].clip(lower=0))
+    cmap_colors = [(0, 0.6, 0), (0.9, 0.9, 0), (0.9, 0, 0)]; cmap = LinearSegmentedColormap.from_list('safecast_gyr', cmap_colors)
+    log_vmin = 0.0; log_vmax = 7.0; norm = mcolors.Normalize(vmin=log_vmin, vmax=log_vmax)
+    marker_size = 300
+
+    # --- MODIFIED PARAMETERS for scatter ---
+    alpha_value = 0.25 # Increased alpha for less transparency
+    line_width = 0.5   # Set line width for edges
+    edge_color = 'black' # Set edge color
+    # --- END MODIFIED PARAMETERS ---
+
+    scatter = ax.scatter(
+        x_pixels, y_pixels,
+        c=values,
+        s=marker_size,
+        cmap=cmap,
+        alpha=alpha_value, # Use new alpha
+        norm=norm,
+        marker='o',
+        linewidths=line_width, # Use new line width
+        edgecolors=edge_color  # Use new edge color
+    )
+
     ax.set_xlim(0, width); ax.set_ylim(height, 0); ax.axis('off'); fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     buf = io.BytesIO(); fig.savefig(buf, format='png', transparent=True, dpi=dpi); plt.close(fig); buf.seek(0)
     try: img = Image.open(buf); img.save(tile_path)
     except Exception as e: print(f"Error saving tile image {tile_path}: {e}"); Path(tile_path).touch(); return None
     return tile_path
+# *** END MODIFIED generate_tile function ***
 
 # --- API Routes ---
 
@@ -314,16 +343,26 @@ async def get_stats():
 
 
 @app.get("/api/tiles/{z}/{x}/{y}.png")
-async def get_tile(z: int, x: int, y: int):
+async def get_tile_endpoint(z: int, x: int, y: int): # Renamed function to avoid conflict
     """Generates and serves a map tile image."""
     tile_path = f"tiles/{z}/{x}/{y}.png"
-    if not os.path.exists(tile_path): print(f"Generating tile: {z}/{x}/{y}"); generated_path = generate_tile(z, x, y);
-    if not os.path.exists(tile_path): raise HTTPException(status_code=500, detail="Failed to generate or find tile")
-    return FileResponse(tile_path, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+    # Always regenerate for testing appearance, remove this line for caching
+    # if os.path.exists(tile_path): os.remove(tile_path)
+
+    if not os.path.exists(tile_path):
+        print(f"Generating tile: {z}/{x}/{y}")
+        generated_path = generate_tile(z, x, y) # Call the generation function
+        if generated_path is None or not os.path.exists(tile_path):
+             # If generation failed or file still doesn't exist, return error
+             raise HTTPException(status_code=500, detail="Failed to generate or find tile")
+    # else:
+    #      print(f"Serving cached tile: {z}/{x}/{y}")
+
+    return FileResponse(tile_path, media_type="image/png", headers={"Cache-Control": "max-age=86400"}) # Cache control
 
 # UPDATED /api/import/csv endpoint to use Form(...)
 @app.post("/api/import/csv")
-async def import_csv(file_path: str = Form(..., description="Path to the CSV file on the server")):
+async def import_csv_endpoint(file_path: str = Form(..., description="Path to the CSV file on the server")): # Renamed function
     """Import data from a specific format CSV file located at file_path on the server"""
     print(f"Received request to import CSV via form: {file_path}")
     # WARNING: Accepting a file path like this is a security risk in production.
@@ -333,8 +372,16 @@ async def import_csv(file_path: str = Form(..., description="Path to the CSV fil
          file_path = os.path.abspath(os.path.join(base_dir, file_path))
          print(f"Resolved relative path to: {file_path}")
 
-    success = import_csv_data(file_path)
+    success = import_csv_data(file_path) # Call the import logic function
     if success:
+        # Optional: Clear tile cache after successful import
+        # try:
+        #     if os.path.exists("tiles"):
+        #         shutil.rmtree("tiles")
+        #         os.makedirs("tiles", exist_ok=True)
+        #         print("Cleared tile cache.")
+        # except Exception as e:
+        #     print(f"Could not clear tile cache: {e}")
         return {"success": True, "message": f"Data from {file_path} imported successfully."}
     else:
         if not os.path.exists(file_path):
